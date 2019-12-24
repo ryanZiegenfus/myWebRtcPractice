@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <title>Video Chat</title>
+        <link rel="stylesheet" type="text/css" href="styles.css">
+        <script src="/socket.io/socket.io.js"></script>
+    </head>
+    <body>
+        <!-- <button id="takeProfilePicture" type="button" autofocus="true">Create Profile Picture</button> -->
+        <video id="myVideoTag" autoplay></video>
+        <video id="theirVideoTag" autoplay></video>
+        <div>
+            <label>Your Name</label><input id="myName" type="text" />
+            <label>Your Message</label><input id="myMessage" type="text" />
+            <input id="sendMessage" type="submit" />
+            <div id="chatArea">Message Output:</div>
+            <div id="signalingArea">Signaling Messages: </div>
+        </div>
+        <!-- <div id="theDiv">
+            <img id="profilePictureOutput">
+        </div>
+        <canvas id="profilePicCanvas" style= "display: none"/> -->
+        <script>
+
+            var myVideoArea = document.querySelector("#myVideoTag");
+            var theirVideoArea = document.querySelector("#theirVideoTag");
+            var myName = document.querySelector('#myName')
+            var myMessage = document.querySelector('#myMessage')
+            var sendMessage = document.querySelector('#sendMessage')
+            var chatArea = document.querySelector('#chatArea')
+            var signalingArea = document.querySelector("#signalingArea")
+            var ROOM = "chat";
+            var SIGNALING_ROOM = "signaling_room"
+            var configuration = {
+                'iceServers': [{
+                    'url': 'stun:stun.l.google.com:19302'
+                }]
+            };
+            var rtcPeerConn;
+            var constraints = {
+                    audio: false,
+                    video:
+                     {
+                        mandatory: {
+                            minWidth: 640,
+                            maxWidth: 640,
+                            minHeight: 360,
+                            maxHeight: 480
+                        }
+                    }
+                };
+            
+            // var videoTag = document.querySelector('#videoTag');
+            // var profilePicCanvas = document.querySelector('#profilePicCanvas');
+            // var profilePictureOutput = document.querySelector('#profilePictureOutput');
+            // var takePicButton = document.querySelector('#takeProfilePicture');
+
+            // var width = 240;
+            // var height = 0;
+            // var streaming = false;
+
+            // takePicButton.addEventListener('click', ev => {
+            //     takeProfilePic();
+            //     ev.preventDefault();
+            // }, false)
+
+            // videoTag.addEventListener('canplay', function(ev) {
+            //     if(!streaming) {
+            //         height = videoTag.videoHeight / (videoTag.videoWidth/width);
+
+            //         if (isNaN(height)) {
+            //             height = width / (4/3);
+            //         }
+
+            //         videoTag.setAttribute('width', width);
+            //         videoTag.setAttribute('height', height);
+            //         profilePicCanvas.setAttribute('width', width);
+            //         profilePicCanvas.setAttribute('height', height);
+            //         streaming = true;
+            //     }
+            // }, false);
+
+            // function takeProfilePic() {
+            //     var context = profilePicCanvas.getContext('2d');
+            //     if (width && height) {
+            //         profilePicCanvas.width = width;
+            //         profilePicCanvas.height = height;
+            //         context.drawImage(videoTag, 0, 0, width, height);
+
+            //         var data = profilePicCanvas.toDataURL('image/png');
+            //         profilePictureOutput.setAttribute('src', data);
+            //         console.log(profilePictureOutput)
+            //     }
+            // }
+
+
+            function onError(error) {
+                console.log("Error!", error)
+            }
+
+            function startStream() {
+                // Sets navigator.mediaDevices.getUserMedia based on browser type [chrome, firefox, mozilla].
+                navigator.mediaDevices.getUserMedia = navigator.mediaDevices.getUserMedia || navigator.mediaDevices.webkitGetUserMedia || navigator.mediaDevices.mozGetUserMedia;
+                navigator.mediaDevices.getUserMedia(constraints)
+                .then((stream) => {
+                    myVideoArea.srcObject = stream
+                    rtcPeerConn.addStream(stream)
+                    myVideoArea.play();
+                    console.log("Success! We have a stream!");
+                })
+                .catch(onError);
+            }
+
+            io = io.connect();
+            io.emit('ready', {"chat_room": ROOM, "signaling_room": SIGNALING_ROOM});
+
+            io.emit('signal', {"type": "user_here", "message": "Are you ready for a call?", "room": SIGNALING_ROOM});
+
+            io.on('signaling_message', data => {
+                displaySignalingMessage("Signal received: " + data.type)
+                if (!rtcPeerConn) {
+                    startSignaling()
+                }
+
+                if (data.type !== "user_here") {
+                    var message = JSON.parse(data.message);
+                    if (message.sdp) {
+                        rtcPeerConn.setRemoteDescription(new RTCSessionDescription(message.sdp), function() {
+                            if (rtcPeerConn.remoteDescription.type === 'offer') {
+                                rtcPeerConn.createAnswer(sendLocalDesc, logError)
+                            }
+                        }, logError)
+                    }
+                    else {
+                        rtcPeerConn.addIceCandidate(new RTCIceCandidate(message.candidate))
+                    }
+                }
+            })
+
+            function startSignaling() {
+                displaySignalingMessage('staring signaling...')
+
+                rtcPeerConn = new webkitRTCPeerConnection(configuration)
+
+                rtcPeerConn.onicecandidate = function(event) {
+                    if (event.candidate) {
+                        io.emit('signal', {"type": "ice candidate", "message": JSON.stringify({
+                            'candidate': event.candidate,
+                            'room': SIGNALING_ROOM
+                        })})
+                    }
+                    displaySignalingMessage("completed that ice candidate...")
+                }
+
+                rtcPeerConn.onnegotiationneeded = function() {
+                    displaySignalingMessage("on negotiation called")
+                    rtcPeerConn.createOffer(sendLocalDesc, logError);
+                }
+
+                rtcPeerConn.onaddstream = function(event) {
+                    displaySignalingMessage("going to add their stream...")
+                    theirVideoArea.srcObject = event.stream
+                }
+
+                navigator.mediaDevices.getUserMedia = navigator.mediaDevices.getUserMedia || navigator.mediaDevices.webkitGetUserMedia || navigator.mediaDevices.mozGetUserMedia;
+                navigator.mediaDevices.getUserMedia(constraints)
+                .then(stream => {
+                    myVideoArea.srcObject = stream
+                    rtcPeerConn.addStream(stream)
+                    myVideoArea.play();
+                    console.log("Success! We have a stream!");
+                })
+                .catch(onError);
+            }
+
+            function sendLocalDesc(desc) {
+                rtcPeerConn.setLocalDescription(desc, function () {
+                    displaySignalingMessage("sending local description");
+                    io.emit('signal', {
+                        "type":"SDP",
+                        "message": JSON.stringify({
+                            'sdp': rtcPeerConn.localDescription
+                        }),
+                        "room": SIGNALING_ROOM
+                    })
+                }, logError)
+            }
+
+            function logError(error) {
+                displaySignalingMessage(error.name + ': ' + error.message);
+            }
+
+            io.on('announce', data => {
+                displayMessage(data.message)
+            })
+
+            io.on('message', data => displayMessage(data.author + ": " + data.message))
+
+            sendMessage.addEventListener('click', event => {
+                io.emit('send', {"author":myName.value, "message":myMessage.value, "room":ROOM});
+                event.preventDefault();
+            }, false);
+
+            function displayMessage(message) {
+                chatArea.innerHTML = chatArea.innerHTML + "<br/>" + message;
+            }
+
+            function displaySignalingMessage(message) {
+                signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + message;
+            }
+        </script>
+    </body>
+</html>
